@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Studio Foto Profesional</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        studio: { 900: '#111827', 800: '#1F2937', 700: '#374151', primary: '#3B82F6' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #111827; color: white; }
+        .glass-panel { background: rgba(31, 41, 55, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
+        .spinner { border: 4px solid rgba(255,255,255,0.1); border-left-color: #3B82F6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useRef } = React;
+
+        const App = () => {
+            // Data Konfigurasi
+            const pasfotoSizes = [
+                { name: '3x4', ratio: '3:4' },
+                { name: '2x3 / 4x6', ratio: '2:3' },
+                { name: 'Kotak (1:1)', ratio: '1:1' },
+                { name: 'Portrait (9:16)', ratio: '9:16' },
+                { name: 'Landscape (16:9)', ratio: '16:9' }
+            ];
+
+            const colorPalette = [
+                { name: 'Merah', hex: '#db1514' },
+                { name: 'Merah Marun', hex: '#7e1117' },
+                { name: 'Biru', hex: '#0159c5' },
+                { name: 'Biru Agak Gelap', hex: '#0C0CF6' },
+                { name: 'Kuning', hex: '#ffff00' }
+            ];
+
+            const accessoryTypes = [
+                { id: 'jas', label: 'Jas' },
+                { id: 'kemeja', label: 'Kemeja' },
+                { id: 'dasi', label: 'Dasi' },
+                { id: 'peci', label: 'Peci' }
+            ];
+
+            // Pilihan Gaya Pencahayaan Pintar (Smart Lighting)
+            const lightingStyles = [
+                { id: 'studio', name: 'Studio Profesional (3-Point Lighting)', desc: 'Cahaya berdimensi sempurna dengan Key, Fill, dan Rim light.' },
+                { id: 'rembrandt', name: 'Rembrandt (Dramatis)', desc: 'Cahaya kontras membentuk segitiga di pipi, sangat berdimensi.' },
+                { id: 'soft', name: 'Soft Beauty Light', desc: 'Cahaya sangat lembut & merata, fokus pada kehalusan kulit.' }
+            ];
+
+            // State Utama
+            const [sourceImage, setSourceImage] = useState(null); 
+            const [base64Image, setBase64Image] = useState(null); 
+            const [mimeType, setMimeType] = useState("");
+            
+            // State Aksesoris (objek dinamis)
+            const [accessories, setAccessories] = useState({
+                jas: null, kemeja: null, dasi: null, peci: null
+            });
+            
+            const [resultImage, setResultImage] = useState(null);
+            const [isLoading, setIsLoading] = useState(false);
+            const [loadingText, setLoadingText] = useState("Memproses dengan AI...");
+            const [prompt, setPrompt] = useState(""); // Instruksi Background
+            const [error, setError] = useState(null);
+            const [selectedSize, setSelectedSize] = useState(pasfotoSizes[0]);
+            const [selectedLighting, setSelectedLighting] = useState(lightingStyles[0]);
+            
+            const fileInputRef = useRef(null);
+
+            const showError = (msg) => {
+                setError(msg);
+                setTimeout(() => setError(null), 7000);
+            };
+
+            const handleMainFileChange = (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+                if (!file.type.startsWith('image/')) {
+                    showError("Tolong unggah file gambar (JPG/PNG).");
+                    return;
+                }
+
+                setSourceImage(URL.createObjectURL(file));
+                setMimeType(file.type);
+
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    setBase64Image(reader.result.split(',')[1]);
+                };
+                reader.onerror = () => showError("Gagal membaca file gambar utama.");
+                reader.readAsDataURL(file);
+            };
+
+            const handleAccessoryChange = (type, event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+                if (!file.type.startsWith('image/')) {
+                    showError(`Tolong unggah file gambar (JPG/PNG) untuk referensi ${type}.`);
+                    return;
+                }
+
+                const objectUrl = URL.createObjectURL(file);
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    setAccessories(prev => ({
+                        ...prev,
+                        [type]: {
+                            url: objectUrl,
+                            base64: reader.result.split(',')[1],
+                            mimeType: file.type
+                        }
+                    }));
+                };
+                reader.onerror = () => showError(`Gagal membaca file gambar ${type}.`);
+                reader.readAsDataURL(file);
+            };
+
+            const removeAccessory = (type) => {
+                setAccessories(prev => ({ ...prev, [type]: null }));
+                // Reset nilai input file agar bisa diunggah ulang file yang sama
+                const fileInput = document.getElementById(`upload-${type}`);
+                if(fileInput) fileInput.value = "";
+            };
+
+            const selectColor = (color) => {
+                setPrompt(`Latar belakang warna Solid dengan kode HEX ${color.hex}`);
+            };
+
+            const handleGenerate = async () => {
+                if (!base64Image) {
+                    showError("Silakan unggah foto utama terlebih dahulu.");
+                    return;
+                }
+                if (!prompt) {
+                    showError("Silakan pilih warna latar belakang atau ketikkan instruksi.");
+                    return;
+                }
+
+                setIsLoading(true);
+                setError(null);
+                setResultImage(null);
+
+                // Efek loading cerdas (simulasi evaluasi fotografi)
+                const loadingMessages = [
+                    "Mengevaluasi ISO dan Noise...",
+                    "Mengkalibrasi Aperture & Shutter Speed...",
+                    "Membangun Dimensi 3-Point Lighting...",
+                    "Memisahkan Subjek dari Latar (Rim Light)...",
+                    "Menerapkan Aksesoris & Rendering Akhir..."
+                ];
+                let msgIndex = 0;
+                setLoadingText(loadingMessages[0]);
+                const intervalId = setInterval(() => {
+                    msgIndex = (msgIndex + 1) % loadingMessages.length;
+                    setLoadingText(loadingMessages[msgIndex]);
+                }, 2500);
+
+                try {
+                    // Deteksi aksesoris yang aktif
+                    const activeAccessories = Object.keys(accessories).filter(key => accessories[key] !== null);
+                    
+                    // PROMPT CERDAS (Instruksi Fotografi & Segitiga Eksposur)
+                    let basePrompt = `Anda adalah Master Fotografer dan Editor Studio Profesional.
+                    
+SISTEM KOREKSI CERDAS AKTIF:
+1. Evaluasi Segitiga Eksposur: 
+   - ISO: Bersihkan noise/bintik, pastikan tekstur kulit halus namun detail pori natural terjaga.
+   - Shutter Speed: Hilangkan motion blur sekecil apapun, buat gambar sangat tajam (freeze).
+   - Aperture: Fokus paling tajam di area wajah (mata, hidung, bibir) dengan depth-of-field yang tepat.
+2. Penataan Cahaya (Lighting Setup) - ${selectedLighting.name}:
+   - HINDARI CAHAYA DATAR (FLAT). Terapkan tata cahaya berdimensi.
+   - Gunakan Key Light yang pas, Fill Light untuk melembutkan bayangan keras, dan WAJIB gunakan Rim/Hair Light (backlight) agar pinggiran subjek terpisah jelas dari latar (pop-out / 3D look).
+   - Jika subjek memakai aksesoris, pastikan pencahayaan aksesoris menyatu dengan pencahayaan wajah.
+
+Instruksi Latar: Hapus latar belakang asli, ganti dengan: ${prompt}.`;
+                    
+                    if (activeAccessories.length > 0) {
+                        const accNames = activeAccessories.map(k => k.charAt(0).toUpperCase() + k.slice(1)).join(', ');
+                        basePrompt += `\n\n3. SANGAT PENTING: Pakaikan ${accNames} ke tubuh subjek pada foto utama secara proporsional, rapi, dan natural. Gunakan gambar referensi yang saya berikan untuk meniru persis model dan warnanya.`;
+                    }
+
+                    // Susun array `parts` untuk Payload API
+                    let requestParts = [];
+                    requestParts.push({ text: basePrompt });
+                    requestParts.push({ text: "Berikut adalah Foto Utama dari subjek:" });
+                    requestParts.push({
+                        inlineData: {
+                            mimeType: mimeType || "image/jpeg",
+                            data: base64Image
+                        }
+                    });
+
+                    // Tambahkan referensi gambar aksesoris jika ada
+                    activeAccessories.forEach(key => {
+                        const name = key.charAt(0).toUpperCase() + key.slice(1);
+                        requestParts.push({ text: `Berikut adalah Gambar Referensi ${name} yang harus dipakaikan:` });
+                        requestParts.push({
+                            inlineData: {
+                                mimeType: accessories[key].mimeType,
+                                data: accessories[key].base64
+                            }
+                        });
+                    });
+
+                    const payload = {
+                        contents: [{
+                            role: "user",
+                            parts: requestParts
+                        }],
+                        generationConfig: {
+                            responseModalities: ["IMAGE"],
+                            imageConfig: { aspectRatio: selectedSize.ratio }
+                        }
+                    };
+
+                    const apiKey = ""; // API Key disisipkan otomatis oleh platform
+                    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent?key=${apiKey}`;
+
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error?.message || "Gagal memproses gambar dari server API.");
+                    }
+
+                    const result = await response.json();
+                    const part = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+                    
+                    if (part && part.inlineData) {
+                        const imgUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                        setResultImage(imgUrl);
+                    } else {
+                        throw new Error("AI tidak mengembalikan gambar yang valid. Sistem mungkin sedang sibuk.");
+                    }
+
+                } catch (err) {
+                    console.error("Generate Error:", err);
+                    showError(err.message || "Terjadi kesalahan sistem. Silakan coba sesaat lagi.");
+                } finally {
+                    clearInterval(intervalId); // Hentikan animasi text
+                    setIsLoading(false);
+                    setLoadingText("Memproses dengan AI...");
+                }
+            };
+
+            return (
+                <div className="min-h-screen p-4 md:p-8 max-w-7xl mx-auto">
+                    {/* Header */}
+                    <div className="text-center mb-10">
+                        <h1 className="text-4xl font-bold mb-2 text-blue-400">AI Studio Foto</h1>
+                        <p className="text-gray-400">Ubah foto HP biasa menjadi pasfoto studio profesional dengan AI.</p>
+                    </div>
+
+                    {/* Error Banner */}
+                    {error && (
+                        <div className="mb-6 bg-red-500/20 border border-red-500 text-red-100 p-4 rounded-lg flex items-center gap-3">
+                            <span className="font-bold">⚠️ Error:</span> {error}
+                        </div>
+                    )}
+
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                        {/* Panel Kiri - Kontrol */}
+                        <div className="lg:col-span-5 flex flex-col gap-6">
+                            
+                            {/* Langkah 1: Foto Utama */}
+                            <div className="glass-panel p-6 rounded-xl">
+                                <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                                    <span className="bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm">1</span> 
+                                    Unggah Foto Utama
+                                </h2>
+                                <div 
+                                    onClick={() => fileInputRef.current?.click()}
+                                    className="border-2 border-dashed border-gray-500 hover:border-blue-500 hover:bg-studio-800 transition-all rounded-xl p-8 text-center cursor-pointer flex flex-col items-center justify-center min-h-[200px]"
+                                >
+                                    <input 
+                                        type="file" 
+                                        ref={fileInputRef}
+                                        onChange={handleMainFileChange}
+                                        accept="image/jpeg, image/png, image/webp"
+                                        className="hidden"
+                                    />
+                                    {sourceImage ? (
+                                        <img src={sourceImage} alt="Preview" className="max-h-64 rounded-lg shadow-lg object-contain" />
+                                    ) : (
+                                        <div className="text-gray-400">
+                                            <div className="text-4xl mb-2">📸</div>
+                                            <p className="font-medium">Klik untuk pilih foto</p>
+                                            <p className="text-sm text-gray-500 mt-1">Bisa foto selfie atau langsung dari kamera HP</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Langkah 2: Aksesoris */}
+                            <div className="glass-panel p-6 rounded-xl">
+                                <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                                    <span className="bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm">2</span> 
+                                    Pakaian & Aksesoris (Opsional)
+                                </h2>
+                                <p className="text-sm text-gray-400 mb-4">Unggah foto referensi pakaian jika Anda ingin mengganti baju di foto utama.</p>
+                                
+                                <div className="grid grid-cols-2 gap-4">
+                                    {accessoryTypes.map((acc) => (
+                                        <div key={acc.id} className="bg-studio-800 p-3 rounded-lg border border-gray-700">
+                                            <label className="block text-sm font-medium text-gray-300 mb-2">{acc.label}</label>
+                                            {accessories[acc.id] ? (
+                                                <div className="relative group">
+                                                    <img src={accessories[acc.id].url} className="w-full h-24 object-cover rounded-md" alt={`Ref ${acc.label}`}/>
+                                                    <button 
+                                                        onClick={() => removeAccessory(acc.id)}
+                                                        className="absolute inset-0 bg-red-600/80 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-md text-sm font-bold"
+                                                    >
+                                                        Hapus
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <div className="relative">
+                                                    <input 
+                                                        type="file" 
+                                                        id={`upload-${acc.id}`}
+                                                        onChange={(e) => handleAccessoryChange(acc.id, e)}
+                                                        accept="image/*"
+                                                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                                    />
+                                                    <div className="w-full h-24 border border-dashed border-gray-600 rounded-md flex items-center justify-center text-gray-500 bg-studio-900 hover:border-blue-400 transition-colors">
+                                                        <span className="text-xs text-center px-2">+ Upload {acc.label}</span>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                        </div>
+
+                        {/* Panel Kanan - Pengaturan Lanjutan & Hasil */}
+                        <div className="lg:col-span-7 flex flex-col gap-6">
+                            
+                            {/* Langkah 3: Pengaturan */}
+                            <div className="glass-panel p-6 rounded-xl flex-grow">
+                                <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
+                                    <span className="bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm">3</span> 
+                                    Pengaturan Output
+                                </h2>
+                                
+                                {/* Pilihan Ukuran */}
+                                <div className="mb-6">
+                                    <label className="block text-sm font-medium text-gray-300 mb-2">Ukuran / Proporsi</label>
+                                    <div className="flex flex-wrap gap-2">
+                                        {pasfotoSizes.map((size) => (
+                                            <button
+                                                key={size.name}
+                                                onClick={() => setSelectedSize(size)}
+                                                className={`px-4 py-2 rounded-lg text-sm transition-all border ${selectedSize.name === size.name ? 'bg-blue-600 border-blue-500 text-white shadow-lg' : 'bg-studio-800 border-gray-600 text-gray-300 hover:bg-studio-700'}`}
+                                            >
+                                                {size.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Sistem Pencahayaan Pintar */}
+                                <div className="mb-6 glass-panel p-4 rounded-xl border border-yellow-500/40 relative overflow-hidden bg-gradient-to-br from-studio-800 to-studio-900 shadow-[0_0_15px_rgba(234,179,8,0.1)]">
+                                    <div className="absolute top-0 right-0 bg-gradient-to-l from-yellow-500 to-yellow-600 text-black text-[10px] font-bold px-3 py-1 rounded-bl-lg shadow-md">AI SMART STUDIO</div>
+                                    <label className="block text-sm font-bold text-yellow-400 mb-2 flex items-center gap-2">
+                                        <span>📸</span> Evaluasi Eksposur & Dimensi Cahaya
+                                    </label>
+                                    <p className="text-xs text-gray-300 mb-4 leading-relaxed">AI akan mengoreksi <span className="text-white font-semibold">ISO, Shutter Speed, Aperture</span> secara otomatis dan membangun tata cahaya berdimensi agar foto tidak datar.</p>
+                                    <div className="flex flex-col gap-3">
+                                        {lightingStyles.map((style) => (
+                                            <label key={style.id} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${selectedLighting.id === style.id ? 'bg-yellow-500/20 border-yellow-500 shadow-[inset_0_0_10px_rgba(234,179,8,0.2)]' : 'bg-studio-900 border-gray-700 hover:border-yellow-500/50'}`}>
+                                                <input 
+                                                    type="radio" 
+                                                    name="lighting" 
+                                                    value={style.id} 
+                                                    checked={selectedLighting.id === style.id} 
+                                                    onChange={() => setSelectedLighting(style)}
+                                                    className="mt-1 w-4 h-4 text-yellow-500 focus:ring-yellow-500 bg-gray-800 border-gray-600"
+                                                />
+                                                <div>
+                                                    <div className="font-semibold text-sm text-gray-100">{style.name}</div>
+                                                    <div className="text-xs text-gray-400 mt-1">{style.desc}</div>
+                                                </div>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Pilihan Warna Background */}
+                                <div className="mb-6">
+                                    <label className="block text-sm font-medium text-gray-300 mb-2">Warna Latar Belakang</label>
+                                    <div className="flex flex-wrap gap-3 mb-4">
+                                        {colorPalette.map((color) => (
+                                            <button
+                                                key={color.name}
+                                                onClick={() => selectColor(color)}
+                                                className="w-10 h-10 rounded-full border-2 border-white/20 hover:scale-110 transition-transform shadow-lg relative group"
+                                                style={{ backgroundColor: color.hex }}
+                                                title={color.name}
+                                            >
+                                                <span className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 bg-black text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap z-10">
+                                                    {color.name}
+                                                </span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <textarea 
+                                        value={prompt}
+                                        onChange={(e) => setPrompt(e.target.value)}
+                                        placeholder="Contoh: Latar belakang warna Solid merah (#db1514) ATAU Latar belakang gradasi biru elegan..."
+                                        className="w-full bg-studio-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                        rows="2"
+                                    />
+                                </div>
+
+                                {/* Langkah 4: Tombol Proses */}
+                                <button 
+                                    onClick={handleGenerate}
+                                    disabled={isLoading || !base64Image || !prompt}
+                                    className={`w-full py-4 rounded-xl font-bold text-lg transition-all shadow-lg flex items-center justify-center gap-2 ${
+                                        isLoading || !base64Image || !prompt 
+                                        ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
+                                        : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white hover:scale-[1.02]'
+                                    }`}
+                                >
+                                    {isLoading ? (
+                                        <><div className="spinner w-6 h-6 border-[3px]"></div> <span className="animate-pulse">{loadingText}</span></>
+                                    ) : (
+                                        <>✨ Buat Foto Studio</>
+                                    )}
+                                </button>
+                            </div>
+
+                            {/* Hasil Akhir */}
+                            {resultImage && (
+                                <div className="glass-panel p-6 rounded-xl border-green-500/30 text-center flex flex-col items-center">
+                                    <h2 className="text-2xl font-bold text-green-400 mb-4">Hasil Foto Anda</h2>
+                                    <div className="bg-gray-900 p-2 rounded-xl inline-block shadow-2xl">
+                                        <img src={resultImage} alt="Hasil AI" className="max-h-96 rounded-lg" />
+                                    </div>
+                                    <a 
+                                        href={resultImage} 
+                                        download="Pasfoto-AI-Studio.png"
+                                        className="mt-6 px-8 py-3 bg-green-600 hover:bg-green-500 text-white font-bold rounded-lg transition-colors flex items-center gap-2 shadow-lg"
+                                    >
+                                        ⬇️ Unduh Foto
+                                    </a>
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
